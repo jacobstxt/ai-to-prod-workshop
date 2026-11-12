@@ -10,6 +10,7 @@ import re
 import time
 import unicodedata
 
+from app import security as sec
 from app.llm import chat
 
 try:  # статуси помилок SDK, які НЕ має сенсу ретраїти
@@ -114,7 +115,7 @@ def normalize(message) -> str:
         if message is None:
             return ""
         text = message if isinstance(message, str) else str(message)
-        text = unicodedata.normalize("NFC", text)
+        text = sec.sanitize(text)  # NFKC, без невидимих символів і тегів обгортки
         text = _CTRL.sub(" ", text)
         text = re.sub(r"[ \t]+", " ", text)
         text = re.sub(r"\n\s*\n+", "\n", text)
@@ -148,7 +149,7 @@ def guess_language(text: str) -> str:
 
 
 def build_messages(text: str):
-    safe = re.sub(r"<\s*/?\s*msg\s*>", " ", text, flags=re.I)
+    safe = re.sub(r"<\s*/?\s*msg\b\s*>?", " ", text, flags=re.I)
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": f"<msg>\n{safe}\n</msg>"},
@@ -279,7 +280,7 @@ def finalize(data: dict, text: str) -> dict:
     nh = data.get("needs_human") if isinstance(data.get("needs_human"), bool) else False
 
     # Лише підвищення: безпека людей і шахрайство → urgent.
-    if _DANGER.search(text) or _FRAUD.search(text):
+    if _is_danger(text):
         pr = "urgent"
     if pr == "urgent" or _HUMAN.search(text) or _LEGAL.search(text):
         nh = True
@@ -301,6 +302,16 @@ def finalize(data: dict, text: str) -> dict:
     return {"category": cat, "priority": pr, "needs_human": nh, "language": lang, "summary": summary}
 
 
+def _is_danger(text: str) -> bool:
+    return bool(_DANGER.search(sec.strip_benign(text)) or _FRAUD.search(text))
+
+
+def _secure(data: dict, text: str) -> dict:
+    """Безпековий шар поверх finalize: ін'єкції, summary-guard, гарантія контракту."""
+    return sec.finalize(finalize(data, text), text, danger=_is_danger(text),
+                        human=bool(_HUMAN.search(text) or _LEGAL.search(text)))
+
+
 SAFE_DEFAULT = {"category": "other", "priority": "low", "needs_human": False, "language": "uk",
                 "summary": FALLBACK_SUMMARY["other"]}
 
@@ -315,9 +326,9 @@ def triage(message: str) -> dict:
         data = call_model(short, deadline)
         if data is None:
             data = rule_classify(short)
-        return finalize(data, short)
+        return _secure(data, short)
     except Exception:
         try:
-            return finalize(rule_classify(normalize(message)), normalize(message)[:HEAD])
+            return _secure(rule_classify(normalize(message)), normalize(message)[:HEAD])
         except Exception:
             return dict(SAFE_DEFAULT)

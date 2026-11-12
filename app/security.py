@@ -35,6 +35,23 @@ _APOSTROPHES = str.maketrans({"’": "'", "ʼ": "'", "`": "'", "‘": "'"})
 _WS = re.compile(r"\s+")
 
 
+def sanitize(message) -> str:
+    """Як normalize, але без обрізання: для підключення до власного normalize в triage.py."""
+    try:
+        if message is None:
+            return ""
+        if isinstance(message, bytes):
+            message = message.decode("utf-8", errors="ignore")
+        text = unicodedata.normalize("NFKC", str(message))
+        text = "".join(ch for ch in text if unicodedata.category(ch) not in ("Cf", "Co", "Cs"))
+        text = text.translate(_APOSTROPHES)
+        while OPEN_MARK in text or CLOSE_MARK in text:
+            text = text.replace(OPEN_MARK, " ").replace(CLOSE_MARK, " ")
+        return re.sub(r"<\s*/?\s*msg\b\s*>?", " ", text, flags=re.IGNORECASE)
+    except Exception:
+        return ""
+
+
 def normalize(message) -> str:
     """Очищує вхід: NFKC, без керуючих і невидимих символів, без маркерів обгортки, обрізаний."""
     try:
@@ -132,6 +149,8 @@ _INJECTION = re.compile(
     r"|игнорир\w*|zignoruj|ignorier\w*"
     r"|(попередн|системн|свої|твої|всі|усі|previous|prior|system|above)\w*\s+(інструкц|правил|промпт|instruction|rule|prompt)"
     r"|system ?prompt|системн\w* (промпт|повідомлен)|розкри\w* (інструкц|промпт)|виведи\w* (свій|свої|інструкц|промпт)"
+    r"|нов\w* (інструкц|правил|завдан)|інструкці\w* (систем|адміністр|розробник)|\b(system|assistant|developer|система|адмін)\s*:|\[(system|inst)\]"
+    r"|(постав|встанови|зроби|признач|set|make|mark|change)\w*\s+(the\s+)?(пріоритет|priority|urgent|терміново|категор|category|needs)"
     r"|\bdan\b|jailbreak|developer mode|режим розробника|без обмежень|no restrictions"
     r"|ти тепер|тепер ти|you are now|act as|pretend|притворись|уяви, що ти"
     r"|\b(summary|category|priority|needs_human)\b|резюме|самарі"
@@ -199,8 +218,16 @@ _SAFETY_BENIGN = re.compile(
 )
 
 
+def strip_benign(text) -> str:
+    """Прибирає фрази на кшталт «загорівся індикатор», щоб вони не давали хибний urgent."""
+    try:
+        return _SAFETY_BENIGN.sub(" ", _low(text))
+    except Exception:
+        return str(text or "")
+
+
 def is_safety_threat(text) -> bool:
-    return bool(_SAFETY.search(_SAFETY_BENIGN.sub(" ", _low(text))))
+    return bool(_SAFETY.search(strip_benign(text)))
 
 
 def is_fraud(text) -> bool:
@@ -230,10 +257,10 @@ EMPTY_SUMMARY = "Порожнє або незрозуміле звернення
 _SCORE_CYR = re.compile(r"[а-яіїєґА-ЯІЇЄҐ]")
 _SCORE_LAT = re.compile(r"[a-zA-Z]")
 _SCORE_RU = re.compile(r"[ыэъёЫЭЪЁ]")
-_CAPS_WORD = re.compile(r"\b[A-Z]{4,}\b")
+_CAPS_WORD = re.compile(r"\b[A-ZА-ЯІЇЄҐ]{4,}\b")
 _LONG_NUMBER = re.compile(r"\d{5,}")
 _LEAK = re.compile(
-    r"<<<|>>>|[{}\[\]]|system|prompt|промпт|інструкці|json|\b(category|priority|needs_human|language|summary)\b"
+    r"<<<|>>>|<\s*/?\s*msg|[{}\[\]]|system|prompt|промпт|інструкці|json|\b(category|priority|needs_human|language|summary)\b"
     r"|ігнор|ignore|dan\b|hacked|pwned",
     re.IGNORECASE,
 )
@@ -368,9 +395,10 @@ def _enum(v, allowed):
     return s if s in allowed else None
 
 
-def finalize(data, text) -> dict:
+def finalize(data, text, danger=False, human=False) -> dict:
     """Приводить відповідь моделі (або None) до контракту й застосовує безпекові правила.
 
+    danger/human=True — зовнішні детектори (з triage.py) бачать загрозу/шахрайство чи прохання людини/погрозу.
     Завжди повертає dict рівно з 5 валідними ключами.
     """
     try:
@@ -387,8 +415,8 @@ def finalize(data, text) -> dict:
         language = _clean_language(data.get("language"), text)
 
         injected = detect_injection(text)
-        danger = is_safety_threat(text) or is_fraud(text)
-        rules_human = wants_human(text) or threatens_legal(text)
+        danger = bool(danger) or is_safety_threat(text) or is_fraud(text)
+        rules_human = bool(human) or wants_human(text) or threatens_legal(text)
 
         if injected:
             # атакувальник міг «замовити» urgent чи needs_human — довіряємо лише детермінованим правилам
