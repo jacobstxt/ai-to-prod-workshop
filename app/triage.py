@@ -26,7 +26,7 @@ KEYS = ("category", "priority", "needs_human", "language", "summary")
 TOTAL_BUDGET = 15.0      # с, загальний дедлайн (вимога README — < 20 с)
 MAX_CALLS = 5            # HTTP-спроб усього (rate_limit_x3 потребує 4)
 MAX_CONTENT_RETRIES = 1
-_TIMEOUTS = (4.0, 5.0, 6.0)  # наростаючий таймаут: повільну відповідь обриваємо раніше, ретрай зазвичай швидкий  # повторів через зламаний/порожній вміст (коштують токенів)
+_TIMEOUTS = (5.0, 9.0)  # наростаючий таймаут: повільну відповідь обриваємо раніше, ретрай зазвичай швидкий  # повторів через зламаний/порожній вміст (коштують токенів)
 HEAD, TAIL = 900, 300    # обрізання довгих входів: голова + хвіст
 
 SYSTEM_PROMPT = """You classify customer messages for an electronics web shop support desk.
