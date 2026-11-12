@@ -379,7 +379,7 @@ def safe_summary(summary, text, category, injected=None) -> str:
 _CATEGORY_RULES = (
     ("returns", re.compile(r"поверн\w* (товар|телефон|смартфон|ноутбук|навушник|планшет|годинник|телевізор|покупк|замовлен|його|її|їх)\w*|повернення товару|обмін\w*|обміня\w*|брак\w*|пошкодж\w*|розбит\w*|не той товар|не працює|зламав\w*|несправн\w*|гаранті\w* (ремонт|випад)|return (the|my|this)|exchange|defect\w*|broken|damaged|zwrot\w*|zwróci\w*|wymian\w*|umtausch|defekt")),
     ("payment", re.compile(r"списал\w*|списан\w*|оплат\w*|кошт\w*|гроші|грошей|платіж\w*|платеж\w*|refund|charged|payment|чек\w*|промокод\w*|карт(к|а|у|и)\w*|рахун\w*|płatno\w*|zapłac\w*|zahlung|bezahl\w*")),
-    ("delivery", re.compile(r"доставк\w*|посилк\w*|кур'єр\w*|відділен\w*|нова пошта|укрпошт\w*|трекінг\w*|трек\w*|відправлен\w*|не прийш\w*|прийти|прийде|привез\w*|в дорозі|не доставл\w*|адрес\w*|delivery|parcel|package|shipping|tracking|przesyłk\w*|dostaw\w*|lieferung|paket")),
+    ("delivery", re.compile(r"доставк\w*|посилк\w*|кур'єр\w*|відділен\w*|нова пошта|укрпошт\w*|трекінг\w*|трек\w*|відправлен\w*|не прийш\w*|прийти|прийде|привез\w*|в дорозі|не доставл\w*|адрес\w*|delivery|deliverw*|parcel|package|shipw*|tracking|courier|not (yet )?(arrived|received|delivered)|hasn.t (arrived|come)|where is my order|przesyłk\w*|dostaw\w*|lieferung|paket")),
     ("technical", re.compile(r"сайт\w*|застосун\w*|додат\w*|акаунт\w*|аккаунт\w*|логін\w*|пароль\w*|увійти|вхід|кнопк\w*|помилк\w*|не завантаж\w*|sms|смс|website|\bapp\b|login|log in|password|account|error|bug")),
     ("product", re.compile(r"чи є|в наявн\w*|наявніст\w*|характеристик\w*|сумісн\w*|гарантійн\w* термін|скільки коштує|підкажіть|порівня\w*|in stock|compatible|specs|warranty")),
 )
