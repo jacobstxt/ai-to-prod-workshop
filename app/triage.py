@@ -25,7 +25,8 @@ KEYS = ("category", "priority", "needs_human", "language", "summary")
 
 TOTAL_BUDGET = 15.0      # с, загальний дедлайн (вимога README — < 20 с)
 MAX_CALLS = 5            # HTTP-спроб усього (rate_limit_x3 потребує 4)
-MAX_CONTENT_RETRIES = 1  # повторів через зламаний/порожній вміст (коштують токенів)
+MAX_CONTENT_RETRIES = 1
+_TIMEOUTS = (4.0, 5.0, 6.0)  # наростаючий таймаут: повільну відповідь обриваємо раніше, ретрай зазвичай швидкий  # повторів через зламаний/порожній вміст (коштують токенів)
 HEAD, TAIL = 900, 300    # обрізання довгих входів: голова + хвіст
 
 SYSTEM_PROMPT = """You classify customer messages for an electronics web shop support desk.
@@ -156,19 +157,36 @@ def build_messages(text: str):
     ]
 
 
-def extract_json(raw):
-    """Знаходить перший JSON-об'єкт у тексті (огорожі ```json, текст до/після)."""
+def _squash(x: str) -> str:
+    return re.sub(r"\s+", "", x or "").lower()
+
+
+def extract_json(raw, source: str = ""):
+    """JSON-об'єкт з відповіді моделі (огорожі ```json, текст до/після).
+
+    Захист від ехо (V1): об'єкти, текст яких є у повідомленні клієнта, відкидаються;
+    серед решти перевага — об'єкту з усіма 5 ключами, і береться ОСТАННІЙ (модель зазвичай
+    відповідає наприкінці, а цитати йдуть першими).
+    """
     if not isinstance(raw, str) or "{" not in raw:
         return None
     dec = json.JSONDecoder()
+    src = _squash(source)
+    found = []
     for m in re.finditer(r"\{", raw):
         try:
-            obj, _ = dec.raw_decode(raw, m.start())
+            obj, end = dec.raw_decode(raw, m.start())
         except ValueError:
             continue
-        if isinstance(obj, dict) and ("category" in obj or "priority" in obj):
-            return obj
-    return None
+        if not (isinstance(obj, dict) and ("category" in obj or "priority" in obj)):
+            continue
+        if src and _squash(raw[m.start():end]) in src:
+            continue  # це JSON, який вставив клієнт
+        found.append(obj)
+    if not found:
+        return None
+    full = [o for o in found if all(k in o for k in KEYS)]
+    return (full or found)[-1]
 
 
 def _as_bool(v):
@@ -190,19 +208,31 @@ _CAT_SYN = {"shipping": "delivery", "shipment": "delivery", "billing": "payment"
             "products": "product"}
 
 
+_PR_SYN = {"critical": "urgent", "emergency": "urgent", "highest": "urgent", "normal": "medium",
+           "moderate": "medium", "med": "medium", "mid": "medium", "lowest": "low", "minor": "low"}
+
+
 def repair(obj):
-    """Нормалізує поля відповіді моделі. Повертає dict або None, якщо зміст непридатний."""
+    """Нормалізує поля відповіді моделі. None — лише якщо немає валідної категорії.
+
+    Інші невалідні/відсутні поля стають None і заповнюються детермінованим fallback у finalize,
+    щоб не витрачати ще один виклик моделі через одне зіпсоване поле.
+    """
     if not isinstance(obj, dict):
         return None
     cat = str(obj.get("category", "")).strip().lower()
     cat = _CAT_SYN.get(cat, cat)
-    pr = str(obj.get("priority", "")).strip().lower()
-    nh = _as_bool(obj.get("needs_human"))
-    if cat not in CATEGORIES or pr not in PRIORITIES or nh is None:
+    if cat not in CATEGORIES:
         return None
-    lang = str(obj.get("language", "")).strip().lower()[:2]
+    pr = str(obj.get("priority", "")).strip().lower()
+    pr = _PR_SYN.get(pr, pr)
+    lang = str(obj.get("language", "")).strip().lower()
+    lang = {"ua": "uk", "ukr": "uk", "eng": "en", "rus": "ru", "pol": "pl", "ger": "de"}.get(lang, lang)
+    if not re.fullmatch(r"[a-z]{2}", lang):
+        lang = ""  # невалідний код не обрізаємо — нехай визначить евристика
     summary = obj.get("summary")
-    return {"category": cat, "priority": pr, "needs_human": nh,
+    return {"category": cat, "priority": pr if pr in PRIORITIES else None,
+            "needs_human": _as_bool(obj.get("needs_human")),
             "language": lang, "summary": summary if isinstance(summary, str) else ""}
 
 
@@ -216,7 +246,7 @@ def call_model(text: str, deadline: float):
             return None
         delay = 0.0
         try:
-            raw = chat(messages, timeout=min(6.0, left - 0.3))
+            raw = chat(messages, timeout=min(_TIMEOUTS[min(attempt, len(_TIMEOUTS) - 1)], left - 0.3))
         except _FATAL:
             return None  # ключ/модель — повтор не допоможе
         except Exception as e:
@@ -235,7 +265,7 @@ def call_model(text: str, deadline: float):
                 pass
             delay = min(delay, 2.0) + random.uniform(0, 0.1)
         else:
-            data = repair(extract_json(raw))
+            data = repair(extract_json(raw, text))
             if data is not None:
                 return data
             content_retries += 1
@@ -275,21 +305,32 @@ def rule_classify(text: str) -> dict:
 
 def finalize(data: dict, text: str) -> dict:
     """Пост-правила + гарантія контракту."""
-    cat = data.get("category") if data.get("category") in CATEGORIES else "other"
-    pr = data.get("priority") if data.get("priority") in PRIORITIES else "low"
-    nh = data.get("needs_human") if isinstance(data.get("needs_human"), bool) else False
+    base = None
+    if (data.get("category") not in CATEGORIES or data.get("priority") not in PRIORITIES
+            or not isinstance(data.get("needs_human"), bool)):
+        base = sec.fallback(text)
+    cat = data.get("category") if data.get("category") in CATEGORIES else base["category"]
+    pr = data.get("priority") if data.get("priority") in PRIORITIES else base["priority"]
+    nh = data.get("needs_human") if isinstance(data.get("needs_human"), bool) else base["needs_human"]
 
     # Лише підвищення: безпека людей і шахрайство → urgent.
-    if _is_danger(text):
-        pr = "urgent"
-    if pr == "urgent" or _HUMAN.search(text) or _LEGAL.search(text):
-        nh = True
 
-    # Мова: детермінована евристика для кирилиці, модель — для решти.
-    lang = data.get("language") or ""
-    heur = guess_language(text)
-    if not re.fullmatch(r"[a-z]{2}", lang) or _CYR.search(text) or heur in ("pl", "de") or not has_letters(text):
-        lang = heur
+    # Мова: модель — основне джерело; евристика лише для кириличного тексту і невалідних відповідей.
+    lang = str(data.get("language") or "").strip().lower()
+    valid = bool(re.fullmatch(r"[a-z]{2}", lang))
+    cyr = len(_CYR.findall(text))
+    lat = len(re.findall(r"[a-zA-ZÀ-ɏ]", text))
+    if not has_letters(text):
+        lang = "uk"
+    elif cyr and cyr >= lat:
+        if _UK.search(text):
+            lang = "uk"  # українські літери: укр. або суржик
+        elif _RU.search(text):
+            lang = "ru"
+        elif lang not in ("uk", "ru", "be", "bg", "sr", "mk"):
+            lang = "uk"
+    elif not valid:
+        lang = sec.guess_language(text)
 
     summary = data.get("summary") if isinstance(data.get("summary"), str) else ""
     summary = re.sub(r"\s+", " ", summary).strip()
@@ -302,14 +343,32 @@ def finalize(data: dict, text: str) -> dict:
     return {"category": cat, "priority": pr, "needs_human": nh, "language": lang, "summary": summary}
 
 
+DETECT_LIMIT = 40000  # детектори бачать повний текст (V2), але з розумною межею
+
+
+def _variants(text: str):
+    t = text[:DETECT_LIMIT]
+    despaced = re.sub(r"(?<=\b\w) +(?=\w\b)", "", t)  # split letters -> joined word (V3)
+    return (t, despaced) if despaced != t else (t,)
+
+
 def _is_danger(text: str) -> bool:
-    return bool(_DANGER.search(sec.strip_benign(text)) or _FRAUD.search(text))
+    return any(sec.is_safety_threat(v) or sec.is_fraud(v) for v in _variants(text))
 
 
-def _secure(data: dict, text: str) -> dict:
-    """Безпековий шар поверх finalize: ін'єкції, summary-guard, гарантія контракту."""
-    return sec.finalize(finalize(data, text), text, danger=_is_danger(text),
-                        human=bool(_HUMAN.search(text) or _LEGAL.search(text)))
+def _wants_human(text: str) -> bool:
+    return any(sec.wants_human(v) or sec.threatens_legal(v) for v in _variants(text))
+
+
+def _secure(data: dict, text: str, full: str = None) -> dict:
+    """Безпековий шар поверх finalize. Рішення urgent/needs_human — з ПОВНОГО тексту (V2)."""
+    full = text if full is None else full
+    out = sec.finalize(finalize(data, text), text, danger=_is_danger(full), human=_wants_human(full))
+    if _is_danger(full) and out["priority"] != "urgent":
+        out["priority"] = "urgent"
+    if out["priority"] == "urgent" or _wants_human(full):
+        out["needs_human"] = True
+    return out
 
 
 SAFE_DEFAULT = {"category": "other", "priority": "low", "needs_human": False, "language": "uk",
@@ -325,10 +384,11 @@ def triage(message: str) -> dict:
         short = truncate(text)
         data = call_model(short, deadline)
         if data is None:
-            data = rule_classify(short)
-        return _secure(data, short)
+            data = sec.fallback(short)
+        return _secure(data, short, text)
     except Exception:
         try:
-            return _secure(rule_classify(normalize(message)), normalize(message)[:HEAD])
+            t = normalize(message)[:HEAD]
+            return _secure(sec.fallback(t), t)
         except Exception:
             return dict(SAFE_DEFAULT)

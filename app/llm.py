@@ -37,11 +37,11 @@ def chat(messages, timeout: float = 8.0, **kwargs) -> str:
     try:
         resp = client.chat.completions.create(model=MODEL, messages=messages, **params)
     except BadRequestError:
-        if not _extra:
+        if "reasoning_effort" not in params:
             raise
-        _extra = {}
         params = {k: v for k, v in params.items() if k != "reasoning_effort"}
         resp = client.chat.completions.create(model=MODEL, messages=messages, **params)
+        _extra = {}  # вимикаємо лише якщо БЕЗ параметра запит пройшов — отже, 400 був через нього
     if not resp.choices:
         return ""
     return resp.choices[0].message.content or ""

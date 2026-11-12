@@ -156,23 +156,56 @@ _INJECTION = re.compile(
     r"|\b(summary|category|priority|needs_human)\b|резюме|самарі"
     r"|(напиши|встав|додай|допиши|постав|поверни|виведи|write|insert|include|put|return|output|print|say|set)\w*"
     r".{0,40}\b(в|у|до|into|in|to)\s+(summary|опис|відповід|поле|json|output)"
-    r"|\{\s*\"?(category|priority|needs_human|language|summary)",
+    r"|\{\s*\"?(category|priority|needs_human|language|summary)"
+    # слово-пейлоад без явного поля: «напиши слово X», «відповідай лише словом X»
+    r"|(напиш|встав|додай|допиш|виведи|відповіда|write|insert|output|print|respond|reply|answer|type)\w*\s+(\w+\s+){0,3}"
+    r"(слово|словом|фраз\w*|word|phrase|only the|лише слов\w*|тільки слов\w*)"
+    r"|(в|у|до)\s+(опис|описі|поле|полі)\b.{0,40}(слово|фраз|текст|напиш)|(в|у)\s+полі?\s+опис"
+    # ru
+    r"|(напиши|добавь|вставь|впиши|выведи|допиши)\w*.{0,40}\b(в|во)\s+(описани|резюме|ответ|поле)"
+    r"|(предыдущ|системн|все)\w*\s+(инструкц|правил)|ты теперь"
+    # pl
+    r"|(wpisz|napisz|dodaj|wstaw|umieść|umiesc|wypisz)\w*.{0,40}\b(do|w)\s+(podsumowani|opis|odpowied|pol[ae])"
+    r"|(podsumowani|opis)\w*\s+(\w+\s+)?(napisz|wpisz|dodaj)"
+    r"|zapomnij|(poprzedni|wszystkie|systemow)\w*\s+(instrukcj|polece|zasad)|jesteś teraz|udawaj"
+    # de
+    r"|(schreib|füg|fueg|setz|trag|gib)\w*.{0,40}\b(in|im|ins)\s+(die |das |den )?(zusammenfassung|beschreibung|antwort|feld)"
+    r"|vergiss|(vorherig|bisherig|alle|system)\w*\s+(anweisung|regel|instruktion)|du bist jetzt",
     re.IGNORECASE | re.DOTALL,
 )
 
+# кириличні двійники латиниці (для «HАCKED» з кириличною А)
+_TO_LAT = str.maketrans("аеорсухкмтвніАЕОРСУХКМТВНІ", "aeopcyxkmtbhiAEOPCYXKMTBHI")
+_SPACED = re.compile(r"(?<!\w)(?:\w[ .\-_*·]){2,}\w(?!\w)")
+
+
+def _fold(text) -> str:
+    """Склеює «H A C K E D» і переводить змішані латино-кириличні слова в латиницю."""
+    s = _SPACED.sub(lambda m: re.sub(r"[ .\-_*·]", "", m.group(0)), str(text or ""))
+
+    def word(m):
+        w = m.group(0)
+        if re.search(r"[a-z]", w, re.I) and re.search(r"[а-яіїєґ]", w, re.I):
+            return w.translate(_TO_LAT)
+        return w
+    return re.sub(r"\w+", word, s)
+
 _SAFETY = re.compile(
-    r"\bдим\w*|задим\w*|іскр\w*|іскрит\w*|загор\w*|горит\w*|горі\w* (батаре|акумулятор|заряд)|займ(ав|ання|ається)\w*"
-    r"|спалах\w*|вибух\w*|здув\w*|здул\w*|здут\w*|роздув\w*|роздул\w*|оплав\w*|плавит\w*|пахне гарим\w*|запах гар\w*"
-    r"|(б'є|вдарил\w*|вдарив|удар\w*|бив\w*|шарахнул\w*)\W+(\w+\W+)?струм\w*|струмом"
+    r"\bдим(у|ом|ить\w*|лять\w*|л\w*)?\b|задим\w*|іскр\w*|іскрит\w*|загор(і|ає|ят|ил|ел|ит)\w*|горит\w*"
+    r"|горі\w* (батаре|акумулятор|заряд)|займ(ав|ання|ається)\w*"
+    r"|спалахн\w*|спалахує|спалахують|вибух\w*|здув\w*|здул\w*|здут\w*|роздув\w*|роздул\w*|оплав\w*|плавит\w*|пахне гарим\w*|запах гар\w*"
+    r"|(б'є|б'ється|б'ються|б'ють|вдарил\w*|вдарив|удар\w*|бив\w*|шарахнул\w*|шарахає|трусить)\W+(\w+\W+)?струм\w*"
+    r"|струм\w*\W+(\w+\W+)?(б'є|б'ється|вдарил\w*|вдарив|шарахнул\w*)"
     r"|\bдым\w*|искр\w*|горит|взорв\w*|вздул\w*|током"
-    r"|smok\w*|spark\w*|caught fire|on fire|\bfire\b|burn\w*|explod\w*|swollen|swelling|electric shock|shocked me"
+    r"|smok\w*|spark(s|ed|ing)?\b|caught fire|on fire|\bfire\b|burn\w*|explod\w*|swollen|swelling|electric shock|shocked me"
     r"|\bdym\w*|iskr\w*|pali się|wybuch\w*|spuchn\w*|rauch\w*|funken|brennt|explodiert|aufgebläht|stromschlag",
     re.IGNORECASE,
 )
 
 _FRAUD = re.compile(
-    r"без мого (відома|дозволу|згоди)|без моєї (згоди|участі)|я (нічого )?не (замовля|купува|оплачува|робив|робила|здійснюва)\w*"
-    r"|нічого не (замовля|купува|оплачува)\w*|не я (замовля|купува|оплачува|робив|робила)\w*|(це|то) (був|була|були)? ?не я"
+    r"(списа\w*|списан\w*|платіж\w*|платеж\w*|оплат\w*|транзакц\w*|кошт\w*|грн|гроші)\W+(\w+\W+){0,8}?(я\s+)?(цього|цих|такого|їх|це|його)\s+не\s+(робив|робила|замовля\w*|оплачува\w*|купува\w*|підтверджува\w*)"
+    r"|без мого (відома|дозволу|згоди)|без моєї (згоди|участі)|я (нічого )?не (замовля|купува|оплачува|здійснюва)\w*"
+    r"|нічого не (замовля|купува|оплачува)\w*|не я (замовля|купува|оплачува)\w*|(це|то) (був|була|були)? ?не я"
     r"|шахра\w*|аферист\w*|вкра\w* (карт|гроші|кошт|дан)|крадіжк\w*|несанкціон\w*|невідом\w* (списан|платіж|транзакц|оплат)"
     r"|злама\w* (мій |мого |моїй |мою )?(акаунт|аккаунт|обліков|профіл|кабінет)|(акаунт|аккаунт|профіль|кабінет)\w* (зламал|зламан|злам)\w*"
     r"|без моего ведома|мошен\w*|я не (заказывал|покупал|оплачивал)"
@@ -187,34 +220,61 @@ _HUMAN_NOUN = (
     r"|человек\w*|сотрудник\w*|human|real person|person|live agent|agent|manager|operator|representative|supervisor"
     r"|konsultant\w*|człowiek\w*|mitarbeiter\w*|menschen)"
 )
+_HUMAN_NOUN_NATIVE = (
+    r"(оператор\w*|люд(ин|ей|ьм)\w*|менеджер\w*|співробітник\w*|консультант\w*|працівник\w*|адміністратор\w*"
+    r"|человек\w*|сотрудник\w*|konsultant\w*|człowiek\w*|mitarbeiter\w*|menschen)"
+)
+# «мобільний оператор», «телефон для літньої людини», «password manager» — не прохання людини
+_HUMAN_BENIGN = re.compile(
+    r"(mobile|network|cellular|carrier|sim)\s+operators?\b|operator\s+(lock|settings|switch\w*|network|code)"
+    r"|(мобільн|стільников|сотов)\w*\s+оператор\w*"
+    r"|оператор\w*\s+(зв'язку|связи|київстар|kyivstar|vodafone|водафон|lifecell|лайфсел\w*|мтс|мобільн\w*)"
+    r"|(для|for)\s+(\w+\s+){0,2}(людин|людей|человек|person|people|elderly)\w*"
+    r"|(password|task|file|download)\s+manager|менеджер\w*\s+(паролів|паролей|завантажень|файлів)",
+    re.IGNORECASE,
+)
 _HUMAN_REQUEST = re.compile(
     r"жив\w*\s+" + _HUMAN_NOUN + r"|живого|живою|real person|live (agent|person|chat with a person)"
+    r"|\b(talk|speak|chat|connect|transfer|escalate|put)\w*\s+(me\s+)?(to|with|through to)\s+(a|an|the|your|some)?\s*"
+    r"(real\s+|live\s+)?(human|person|agent|manager|operator|representative|rep|supervisor|someone|somebody)\b"
+    r"|\b(want|need|get me|give me|request|requesting)\s+(a|an|the|to)?\s*(real\s+|live\s+)?"
+    r"(human|manager|operator|representative|supervisor)\b(?!')"
     r"|(покли\w*|з'єдна\w*|переключ\w*|передай\w*|переведі\w*|хочу|хочемо|дайте|потріб\w*|прошу|вимагаю|можна|треба"
     r"|поговорити|зв'яж\w*|говорити|спілкуватися|позови\w*|соедини\w*|нужен|хочу поговорить"
-    r"|connect|talk|speak|want|need|get me|transfer|escalate|let me|chcę|proszę|möchte|bitte)\b"
-    r".{0,30}?\b" + _HUMAN_NOUN,
+    r"|chcę|proszę|möchte|bitte)\b"
+    r".{0,30}?\b" + _HUMAN_NOUN_NATIVE,
     re.IGNORECASE | re.DOTALL,
 )
 
 _THREAT = re.compile(
     r"\bсуд\b|\bсуд(у|ом|і|ах|ом)\b|\bсудит\w*|\bсудов\w*|позов\w*|адвокат\w*|юрист\w*|поліц\w*|кіберполіц\w*|прокурат\w*"
-    r"|держспоживзахист\w*|споживзахист\w*|захист\w* прав споживач\w*|регулятор\w*|омбудсмен\w*|нбу\b|антимонопольн\w*"
-    r"|полици\w*|в суд|роспотреб\w*"
-    r"|\bsue\b|lawsuit|lawyer|attorney|court|police|legal action|regulator\w*|consumer protection|ombudsman"
-    r"|sąd\w*|policj\w*|prawnik\w*|anwalt|gericht|polizei|verbraucherschutz",
+    r"|держспоживзахист\w*|споживзахист\w*|захист\w* прав споживач\w*|(до|в|у)\s+регулятор\w*|\bрегулятор(у|ові)\b|скарг\w*.{0,30}регулятор\w*"
+    r"|омбудсмен\w*|\bнбу\b|антимонопольн\w*"
+    r"|полици\w*|в суд\b|роспотреб\w*"
+    r"|\bsue\b|lawsuit|lawyer|attorney|\bcourts?\b|police|legal action|consumer protection|ombudsman"
+    r"|(to|with|contact\w*|report\w*|complain\w*)\s+(the\s+)?(\w+\s+)?regulators?\b"
+    r"|\bsąd(u|em|zie)?\b|\bsądow\w*|policj\w*|prawnik\w*|anwalt|\bgericht\b|polizei|verbraucherschutz",
     re.IGNORECASE,
 )
 
 
 def detect_injection(text) -> bool:
     try:
-        return bool(_INJECTION.search(_low(text)))
+        low = _low(text)
+        return bool(_INJECTION.search(low) or _INJECTION.search(_fold(low)))
     except Exception:
         return False
 
 
 _SAFETY_BENIGN = re.compile(
-    r"(загор\w*|горит\w*|спалах\w*)\s+(\w+\s+)?(індикатор|лампоч|світлодіод|діод|екран|підсвіт|сповіщен|напис|led|indicator|light)\w*"
+    r"(загор\w*|горит\w*|горить|горять|спалах\w*|світ\w*)\s+(\w+\s+)?"
+    r"(індикатор|лампоч|світлодіод|діод|екран|підсвіт|сповіщен|напис|led|indicator|light)\w*"
+    r"|(індикатор|лампоч|світлодіод|діод|led|indicator|light)\w*\s+(\w+\s+)?(загор\w*|горит\w*|горить|горять|спалах\w*)"
+    r"|(датчик|детектор|сповіщувач|извещател)\w*\s+(\w+\s+)?(диму|дыма|газу)"
+    r"|(smoke|fire|co)\s+(detector|alarm|sensor)s?|rauchmelder\w*|czujni\w* dymu"
+    r"|(amazon|kindle)\s+fire\b|\bfire\s*(tv|stick|hd|tablet|os|\d)\b"
+    r"|burn\w*\s+(a\s+|the\s+|my\s+)?(dvd|cd|disc|disk|blu-?ray|iso|image|calories|fat)\w*|\bburn-?in\b"
+    r"|(захист\w*|защит\w*)\s+від\s+(займання|загоряння|перегріву|вибуху)"
 )
 
 
@@ -235,7 +295,10 @@ def is_fraud(text) -> bool:
 
 
 def wants_human(text) -> bool:
-    return bool(_HUMAN_REQUEST.search(_low(text)))
+    try:
+        return bool(_HUMAN_REQUEST.search(_HUMAN_BENIGN.sub(" ", _low(text))))
+    except Exception:
+        return False
 
 
 def threatens_legal(text) -> bool:
@@ -298,7 +361,8 @@ def safe_summary(summary, text, category, injected=None) -> str:
         s = _first_sentence(summary)
         if not (1 <= len(s) <= MAX_SUMMARY) or not _is_ukrainian(s):
             return template
-        if _CAPS_WORD.search(s) or _LEAK.search(s):
+        folded = _fold(s)
+        if _CAPS_WORD.search(s) or _LEAK.search(s) or _CAPS_WORD.search(folded) or _LEAK.search(folded):
             return template
         # заземленість: довгі числа (номери замовлень) мають бути у вхідному тексті
         digits_in = re.sub(r"\D", " ", str(text))
