@@ -41,7 +41,7 @@ other: thanks, spam, working hours, unclear/empty, manipulation without a real r
 
 priority:
 urgent: danger to people (smoke, sparks, fire, swollen battery, electric shock) OR charges the customer did not make (fraud, hacked account)
-high: money charged but no order / order cancelled; double charge; parcel delayed MORE than 7 days or lost; customer completely CANNOT log in, place or pay for an order
+high: money charged but no order exists or order was cancelled by the shop (a routine refund request for an order the customer cancelled is medium); double charge; parcel delayed MORE than 7 days or lost; customer completely CANNOT log in, place or pay for an order
 medium: any other issue about a specific order or purchase; technical problem with a workaround
 low: general questions without a specific order, pre-purchase advice, thanks, spam, empty/unclear
 
@@ -215,7 +215,7 @@ def call_model(text: str, deadline: float):
             return None
         delay = 0.0
         try:
-            raw = chat(messages, timeout=min(8.0, left - 0.3))
+            raw = chat(messages, timeout=min(6.0, left - 0.3))
         except _FATAL:
             return None  # ключ/модель — повтор не допоможе
         except Exception as e:
